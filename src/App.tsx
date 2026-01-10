@@ -21,6 +21,7 @@ function App() {
     getSessionStats,
     getLifetimeStats,
     getWeakSpots,
+    getQueueStats,
     resetStats,
     getHandLabel,
   } = useGameEngine();
@@ -92,6 +93,7 @@ function App() {
   const sessionStats = getSessionStats();
   const lifetimeStats = getLifetimeStats();
   const weakSpots = getWeakSpots();
+  const queueStats = getQueueStats();
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-felt-dark via-felt to-felt-dark">
@@ -203,6 +205,7 @@ function App() {
         sessionStats={sessionStats}
         lifetimeStats={lifetimeStats}
         weakSpots={weakSpots}
+        queueCount={queueStats.count}
         onReset={resetStats}
       />
     </div>

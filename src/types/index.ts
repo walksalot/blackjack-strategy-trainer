@@ -58,12 +58,21 @@ export interface HandStats {
   totalTime: number;
 }
 
+// Spaced Repetition Queue Item
+export interface MistakeQueueItem {
+  handKey: string;            // e.g., "soft_A,7_10"
+  consecutiveCorrect: number; // 0-3, graduates at 3
+  lastShownAt: number;        // timestamp for spacing
+  addedAt: number;            // when first missed
+}
+
 export interface StoredStats {
   totalHands: number;
   totalCorrect: number;
   bestStreak: number;
   byHand: Record<string, HandStats>;
   lastPlayed: string | null;
+  mistakeQueue: MistakeQueueItem[];  // Spaced repetition queue
 }
 
 export interface SessionStats {

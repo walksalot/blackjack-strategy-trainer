@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { GameState, Action, TrainingMode, ActionResult, CurrentHand, StoredStats, WeakSpot } from '../types';
-import { getWeightedHand } from '../data/weights';
+import { getNextHand, QUEUE_CONFIG } from '../data/weights';
 import { getCorrectAction, getExplanation } from '../data/strategy';
 import { generateHandCards, generateDealerCard, formatHandLabel } from '../lib/cardGenerator';
 import { useLocalStorage } from './useLocalStorage';
@@ -11,6 +11,7 @@ const DEFAULT_STATS: StoredStats = {
   bestStreak: 0,
   byHand: {},
   lastPlayed: null,
+  mistakeQueue: [],  // Spaced repetition queue
 };
 
 const INITIAL_STATE: GameState = {
@@ -27,8 +28,21 @@ export function useGameEngine() {
   const [stats, setStats] = useLocalStorage<StoredStats>('blackjack_trainer_stats', DEFAULT_STATS);
   const [state, setState] = useState<GameState>(INITIAL_STATE);
 
+  // Track queue-related state
+  const lastHandKeyRef = useRef<string | null>(null);
+  const handsSinceQueueRef = useRef<number>(0);
+  const currentFromQueueRef = useRef<boolean>(false);
+  const currentQueueIndexRef = useRef<number>(-1);
+
   const generateHand = useCallback(() => {
-    const hand = getWeightedHand(state.mode);
+    // Use getNextHand with queue support
+    const { hand, fromQueue, queueIndex } = getNextHand(
+      state.mode,
+      stats.mistakeQueue || [],
+      lastHandKeyRef.current,
+      handsSinceQueueRef.current
+    );
+
     const playerCards = generateHandCards(hand.handType, hand.handKey);
     const dealerCardObj = generateDealerCard(hand.dealerCard);
     const correctAction = getCorrectAction(hand.handType, hand.handKey, hand.dealerCard, true);
@@ -53,13 +67,33 @@ export function useGameEngine() {
       startTime: Date.now(),
     };
 
+    // Track if this hand is from queue
+    currentFromQueueRef.current = fromQueue;
+    currentQueueIndexRef.current = queueIndex;
+
+    // Update last hand key and queue gap counter
+    const handKey = `${hand.handType}_${hand.handKey}_${hand.dealerCard}`;
+    lastHandKeyRef.current = handKey;
+
+    if (fromQueue) {
+      handsSinceQueueRef.current = 0;
+      // Update lastShownAt for queue item
+      if (queueIndex >= 0 && stats.mistakeQueue) {
+        const newQueue = [...stats.mistakeQueue];
+        newQueue[queueIndex] = { ...newQueue[queueIndex], lastShownAt: Date.now() };
+        setStats({ ...stats, mistakeQueue: newQueue });
+      }
+    } else {
+      handsSinceQueueRef.current++;
+    }
+
     setState(prev => ({
       ...prev,
       currentHand,
       isShowingFeedback: false,
       lastResult: null,
     }));
-  }, [state.mode]);
+  }, [state.mode, stats, setStats]);
 
   const isActionCorrect = useCallback((userAction: Action, correctAction: Action): boolean => {
     if (userAction === correctAction) return true;
@@ -87,6 +121,11 @@ export function useGameEngine() {
     const handKey = getStatsKey(state.currentHand);
     const newStats = { ...stats };
 
+    // Initialize mistakeQueue if missing (backwards compatibility)
+    if (!newStats.mistakeQueue) {
+      newStats.mistakeQueue = [];
+    }
+
     if (!newStats.byHand[handKey]) {
       newStats.byHand[handKey] = { attempts: 0, correct: 0, totalTime: 0 };
     }
@@ -100,6 +139,39 @@ export function useGameEngine() {
       newStats.bestStreak = newStreak;
     }
     newStats.lastPlayed = new Date().toISOString();
+
+    // ===== SPACED REPETITION QUEUE MANAGEMENT =====
+    const existingQueueIndex = newStats.mistakeQueue.findIndex(item => item.handKey === handKey);
+    const wasFromQueue = currentFromQueueRef.current;
+
+    if (!isCorrect) {
+      // INCORRECT: Add to queue or reset consecutive count
+      if (existingQueueIndex >= 0) {
+        // Already in queue - reset consecutive correct
+        newStats.mistakeQueue[existingQueueIndex].consecutiveCorrect = 0;
+        newStats.mistakeQueue[existingQueueIndex].lastShownAt = Date.now();
+      } else {
+        // New mistake - add to queue
+        newStats.mistakeQueue.push({
+          handKey,
+          consecutiveCorrect: 0,
+          lastShownAt: Date.now(),
+          addedAt: Date.now(),
+        });
+      }
+    } else if (wasFromQueue && existingQueueIndex >= 0) {
+      // CORRECT and was from queue: increment consecutive count
+      const item = newStats.mistakeQueue[existingQueueIndex];
+      item.consecutiveCorrect++;
+      item.lastShownAt = Date.now();
+
+      // Check for graduation
+      if (item.consecutiveCorrect >= QUEUE_CONFIG.GRADUATION_THRESHOLD) {
+        // Graduate! Remove from queue
+        newStats.mistakeQueue.splice(existingQueueIndex, 1);
+      }
+    }
+    // ===== END QUEUE MANAGEMENT =====
 
     setStats(newStats);
 
@@ -210,6 +282,11 @@ export function useGameEngine() {
     return formatHandLabel(state.currentHand.handType, state.currentHand.handKey);
   }, [state.currentHand]);
 
+  const getQueueStats = useCallback(() => ({
+    count: stats.mistakeQueue?.length || 0,
+    items: stats.mistakeQueue || [],
+  }), [stats.mistakeQueue]);
+
   return {
     state,
     generateHand,
@@ -219,6 +296,7 @@ export function useGameEngine() {
     getSessionStats,
     getLifetimeStats,
     getWeakSpots,
+    getQueueStats,
     resetStats,
     getHandLabel,
   };

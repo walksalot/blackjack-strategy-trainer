@@ -12,7 +12,14 @@
  * 1 = TRIVIAL - Obvious plays
  */
 
-import type { Hand, TrainingMode, DealerCard } from '../types';
+import type { Hand, TrainingMode, DealerCard, MistakeQueueItem } from '../types';
+
+// Spaced repetition configuration
+export const QUEUE_CONFIG = {
+  SELECTION_CHANCE: 0.3,    // 30% chance to pull from queue
+  GRADUATION_THRESHOLD: 3,  // consecutive correct to graduate
+  MIN_GAP_HANDS: 2,         // minimum hands between same queue item
+} as const;
 
 interface DifficultyInfo {
   weight: number;
@@ -211,4 +218,83 @@ export function getWeightedHand(mode: TrainingMode = 'balanced'): Hand {
   }
 
   return weighted[Math.floor(Math.random() * weighted.length)];
+}
+
+/**
+ * Parse hand key back to Hand components
+ */
+function parseHandKey(handKey: string): { handType: string; key: string | number; dealerCard: DealerCard } | null {
+  const parts = handKey.split('_');
+  if (parts.length < 3) return null;
+
+  const handType = parts[0];
+  const dealerCard = parts[parts.length - 1] as DealerCard;
+  const key = parts.slice(1, -1).join('_');
+
+  return {
+    handType,
+    key: handType === 'hard' ? parseInt(key) : key,
+    dealerCard,
+  };
+}
+
+/**
+ * Get next hand with spaced repetition queue support
+ * Prioritizes mistake queue items that need review
+ */
+export function getNextHand(
+  mode: TrainingMode,
+  mistakeQueue: MistakeQueueItem[],
+  lastHandKey: string | null,
+  handsSinceQueueItem: number
+): { hand: Hand; fromQueue: boolean; queueIndex: number } {
+  // Check if we should pull from queue
+  const shouldUseQueue =
+    mistakeQueue.length > 0 &&
+    Math.random() < QUEUE_CONFIG.SELECTION_CHANCE &&
+    handsSinceQueueItem >= QUEUE_CONFIG.MIN_GAP_HANDS;
+
+  if (shouldUseQueue) {
+    // Find eligible queue items (not the same as last hand)
+    const now = Date.now();
+    const eligible = mistakeQueue
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.handKey !== lastHandKey)
+      .sort((a, b) => {
+        // Prioritize by: oldest added, then least recently shown
+        const scoreA = (now - a.item.addedAt) + (now - a.item.lastShownAt) / 10;
+        const scoreB = (now - b.item.addedAt) + (now - b.item.lastShownAt) / 10;
+        return scoreB - scoreA;
+      });
+
+    if (eligible.length > 0) {
+      const selected = eligible[0];
+      const parsed = parseHandKey(selected.item.handKey);
+
+      if (parsed) {
+        // Find the full hand info
+        const allHands = getAllHands();
+        const matchingHand = allHands.find(h =>
+          h.handType === parsed.handType &&
+          String(h.handKey) === String(parsed.key) &&
+          h.dealerCard === parsed.dealerCard
+        );
+
+        if (matchingHand) {
+          return {
+            hand: matchingHand,
+            fromQueue: true,
+            queueIndex: selected.index,
+          };
+        }
+      }
+    }
+  }
+
+  // Fall back to normal weighted selection
+  return {
+    hand: getWeightedHand(mode),
+    fromQueue: false,
+    queueIndex: -1,
+  };
 }

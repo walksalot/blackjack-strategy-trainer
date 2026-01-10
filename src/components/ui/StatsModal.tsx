@@ -7,10 +7,11 @@ interface StatsModalProps {
   sessionStats: SessionStats;
   lifetimeStats: { totalHands: number; totalCorrect: number; accuracy: string; bestStreak: number };
   weakSpots: WeakSpot[];
+  queueCount: number;
   onReset: () => void;
 }
 
-export function StatsModal({ isOpen, onClose, sessionStats, lifetimeStats, weakSpots, onReset }: StatsModalProps) {
+export function StatsModal({ isOpen, onClose, sessionStats, lifetimeStats, weakSpots, queueCount, onReset }: StatsModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Statistics" size="md">
       <div className="space-y-6">
@@ -66,6 +67,17 @@ export function StatsModal({ isOpen, onClose, sessionStats, lifetimeStats, weakS
             </div>
           </div>
         )}
+
+        {/* Review Queue */}
+        <div className="flex items-center justify-between p-3 bg-amber-500/10 rounded-lg border border-amber-500/20">
+          <div>
+            <span className="text-white font-medium">Review Queue</span>
+            <span className="text-white/50 text-sm ml-2">(hands you missed)</span>
+          </div>
+          <span className={`font-bold ${queueCount > 0 ? 'text-amber-400' : 'text-green-400'}`}>
+            {queueCount} {queueCount === 1 ? 'hand' : 'hands'}
+          </span>
+        </div>
 
         {/* Reset Button */}
         <div className="pt-4 border-t border-white/10">
